@@ -1,10 +1,12 @@
 package topten;
 
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.HashMap;
 import java.util.StringTokenizer;
+import java.util.Iterator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.NullWritable;
@@ -48,7 +50,7 @@ public class TopTen {
 
     public static class TopTenMapper extends Mapper<Object, Text, NullWritable, Text> {
 	// Stores a map of user reputation to the record
-	TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>();
+	TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>(new RepComparator());
 
 	public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
@@ -56,26 +58,69 @@ public class TopTen {
             while (itr.hasMoreTokens()) {
                 String profile_text = itr.nextToken();
                 Map<String, String> profile_map = transformXmlToMap(profile_text);
-                repToRecordMap.put(profile_map.get("reputation"), profile_text);
+                if (profile_map.containsKey("id")) {
+                    repToRecordMap.put(Integer.valueOf(profile_map.get("reputation")), new Text(profile_text));
+                }
             }
-            
-            // Now extract the top 10 records and pass them to reducer
             
 	}
 
 	protected void cleanup(Context context) throws IOException, InterruptedException {
 	    // Output our ten records to the reducers with a null key
 	    // <FILL IN>
+            // Now extract the top 10 records and pass them to reducer
+            int counter = 1;
+            for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
+//                System.out.println("Key: " + entry.getKey() + ", Value: " + entry.getValue());
+                context.write(entry.getKey(), entry.getValue().toString());
+                if (++counter > 10) {
+                    break;
+                }
+            }
 	}
     }
 
     public static class TopTenReducer extends TableReducer<NullWritable, Text, NullWritable> {
 	// Stores a map of user reputation to the record
-	private TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>();
+	private TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>(new RepComparator());
 
 	public void reduce(NullWritable key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
+            for (Text profile_text: values) {
+                Map<String, String> profile_map = transformXmlToMap(profile_text);
+                repToRecordMap.put(Integer.valueOf(profile_map.get("reputation")), 
+                        new Text(String.valueOf(profile_map.get("id"))));
+            }
 	}
+        
+        // Write the final top ten items to the hbase
+        protected void cleanup(Context context) throws IOException, InterruptedException {
+            int counter = 1;
+            for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
+                Put inHBase = new Put(Bytes.toBytes(entry.getKey()));
+                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
+                        Bytes.toBytes(entry.getValue()));
+                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("id"), 
+                        Bytes.toBytes(entry.getValue()));
+                context.write(null, inHBase);
+                if (++counter > 10) {
+                    break;
+                }
+            }
+        }
+    }
+    
+    static class RepComparator implements Comparator {
+        @Override
+        public int compare(Object o1, Object o2) {
+            if ((int)o1 > (int)o2) {
+                return -1;
+            } else if ((int)o1 < (int)o2) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -90,6 +135,8 @@ public class TopTen {
         job.setNumReduceTasks(1);
         
         FileInputFormat.addInputPath(job, new Path(args[0]));
+        
+        TableMapReduceUtil.initTableReducerJob("topten", TopTenReducer.class, job);
         
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
