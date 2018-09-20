@@ -55,14 +55,14 @@ public class TopTen {
 	public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
             StringTokenizer itr = new StringTokenizer(value.toString(), "\n");
+            System.out.println(value.toString());
             while (itr.hasMoreTokens()) {
                 String profile_text = itr.nextToken();
                 Map<String, String> profile_map = transformXmlToMap(profile_text);
-                if (profile_map.containsKey("id")) {
-                    repToRecordMap.put(Integer.valueOf(profile_map.get("reputation")), new Text(profile_text));
+                if (profile_map.containsKey("id=")) {
+                    repToRecordMap.put(Integer.valueOf(profile_map.get("reputation=")), new Text(profile_text));
                 }
-            }
-            
+            }       
 	}
 
 	protected void cleanup(Context context) throws IOException, InterruptedException {
@@ -72,7 +72,7 @@ public class TopTen {
             int counter = 1;
             for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
 //                System.out.println("Key: " + entry.getKey() + ", Value: " + entry.getValue());
-                context.write(entry.getKey(), entry.getValue().toString());
+                context.write(null, entry.getValue());
                 if (++counter > 10) {
                     break;
                 }
@@ -87,9 +87,9 @@ public class TopTen {
 	public void reduce(NullWritable key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
             for (Text profile_text: values) {
-                Map<String, String> profile_map = transformXmlToMap(profile_text);
-                repToRecordMap.put(Integer.valueOf(profile_map.get("reputation")), 
-                        new Text(String.valueOf(profile_map.get("id"))));
+                Map<String, String> profile_map = transformXmlToMap(profile_text.toString());
+                repToRecordMap.put(Integer.valueOf(profile_map.get("reputation=")), 
+                        new Text(String.valueOf(profile_map.get("id="))));
             }
 	}
         
@@ -99,9 +99,9 @@ public class TopTen {
             for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
                 Put inHBase = new Put(Bytes.toBytes(entry.getKey()));
                 inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
-                        Bytes.toBytes(entry.getValue()));
+                        Bytes.toBytes(Integer.valueOf(entry.getValue().toString())));
                 inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("id"), 
-                        Bytes.toBytes(entry.getValue()));
+                        Bytes.toBytes(Integer.valueOf(entry.getKey())));
                 context.write(null, inHBase);
                 if (++counter > 10) {
                     break;
