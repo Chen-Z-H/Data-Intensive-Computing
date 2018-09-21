@@ -7,6 +7,8 @@ import java.util.TreeMap;
 import java.util.HashMap;
 import java.util.StringTokenizer;
 import java.util.Iterator;
+import java.util.logging.Logger;
+import java.io.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.NullWritable;
@@ -51,62 +53,97 @@ public class TopTen {
     public static class TopTenMapper extends Mapper<Object, Text, NullWritable, Text> {
 	// Stores a map of user reputation to the record
 	TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>(new RepComparator());
-
+        File mapperfile = new File("mapper");
+        
 	public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
             StringTokenizer itr = new StringTokenizer(value.toString(), "\n");
-            System.out.println(value.toString());
+//            System.out.println(value.toString());
+            if (!mapperfile.exists()) {
+                mapperfile.createNewFile();
+            }
+            FileWriter output = new FileWriter(mapperfile, true);
+//            output.write(String.valueOf(itr.hasMoreTokens()));
             while (itr.hasMoreTokens()) {
                 String profile_text = itr.nextToken();
                 Map<String, String> profile_map = transformXmlToMap(profile_text);
-                if (profile_map.containsKey("id=")) {
-                    repToRecordMap.put(Integer.valueOf(profile_map.get("reputation=")), new Text(profile_text));
+//                for (Map.Entry<String, String> entry: profile_map.entrySet()) {
+//                    output.write(entry.getKey() + ", " + entry.getValue() + "\r\n");
+//                }
+                if (profile_map.containsKey("Id")) {
+//                    output.write(profile_map.get("Reputation") + "\r\n");
+                    repToRecordMap.put(Integer.valueOf(profile_map.get("Reputation")), new Text(profile_text));
                 }
-            }       
+            }
+            output.close();
 	}
 
 	protected void cleanup(Context context) throws IOException, InterruptedException {
 	    // Output our ten records to the reducers with a null key
 	    // <FILL IN>
             // Now extract the top 10 records and pass them to reducer
+            
+            FileWriter output = new FileWriter(mapperfile, true);
+//            try {
             int counter = 1;
+            output.write(repToRecordMap.size());
             for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
 //                System.out.println("Key: " + entry.getKey() + ", Value: " + entry.getValue());
-                context.write(null, entry.getValue());
+                output.write(String.valueOf(entry.getKey()) + ", " + entry.getValue().toString() + "\r\n");
+                output.flush();
+//                entry.getValue();
+                context.write(NullWritable.get(), entry.getValue());
                 if (++counter > 10) {
                     break;
                 }
             }
+            output.close();
+//            } finally {
+//                output.close();
+//            }
 	}
     }
 
-    public static class TopTenReducer extends TableReducer<NullWritable, Text, NullWritable> {
+    public static class TopTenReducer extends TableReducer<NullWritable, IntWritable, NullWritable> {
 	// Stores a map of user reputation to the record
 	private TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>(new RepComparator());
+        File reducerfile = new File("reducer");
 
 	public void reduce(NullWritable key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
 	    // <FILL IN>
+            if (!reducerfile.exists()) {
+                reducerfile.createNewFile();
+            }
+            FileWriter output = new FileWriter(reducerfile, true);
+//            output.write("reducer");
             for (Text profile_text: values) {
                 Map<String, String> profile_map = transformXmlToMap(profile_text.toString());
-                repToRecordMap.put(Integer.valueOf(profile_map.get("reputation=")), 
-                        new Text(String.valueOf(profile_map.get("id="))));
+                repToRecordMap.put(Integer.valueOf(profile_map.get("Reputation")), 
+                        new Text(String.valueOf(profile_map.get("Id"))));
             }
+            output.close();
 	}
         
         // Write the final top ten items to the hbase
         protected void cleanup(Context context) throws IOException, InterruptedException {
             int counter = 1;
+            FileWriter output = new FileWriter(reducerfile, true);
             for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
+                output.write(String.valueOf(entry.getKey()) + ", " + entry.getValue().toString() + "\r\n");
+                output.flush();
                 Put inHBase = new Put(Bytes.toBytes(entry.getKey()));
                 inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
                         Bytes.toBytes(Integer.valueOf(entry.getValue().toString())));
                 inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("id"), 
                         Bytes.toBytes(Integer.valueOf(entry.getKey())));
-                context.write(null, inHBase);
+                output.write("Saved");
+                output.flush();
+                context.write(NullWritable.get(), inHBase);
                 if (++counter > 10) {
                     break;
                 }
             }
+            output.close();
         }
     }
     
@@ -126,12 +163,17 @@ public class TopTen {
     public static void main(String[] args) throws Exception {
 	// <FILL IN>
         Configuration conf = new Configuration();
+//        System.out.println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         Job job = Job.getInstance(conf, "TopTen");
         job.setJarByClass(TopTen.class);
 
         job.setMapperClass(TopTenMapper.class);
         job.setCombinerClass(TopTenReducer.class);
         job.setReducerClass(TopTenReducer.class);
+        job.setMapOutputKeyClass(NullWritable.class);
+        job.setMapOutputValueClass(Text.class);
+        job.setOutputKeyClass(NullWritable.class);
+//        job.setOutputValueClass(Text.class);
         job.setNumReduceTasks(1);
         
         FileInputFormat.addInputPath(job, new Path(args[0]));
