@@ -27,6 +27,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.mapreduce.TableMapper;
+import org.apache.hadoop.hbase.mapreduce.TableOutputFormat;
 import org.apache.hadoop.hbase.mapreduce.TableReducer;
 import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
@@ -104,7 +105,7 @@ public class TopTen {
 	}
     }
 
-    public static class TopTenReducer extends TableReducer<NullWritable, IntWritable, NullWritable> {
+    public static class TopTenReducer extends TableReducer<NullWritable, Text, NullWritable> {
 	// Stores a map of user reputation to the record
 	private TreeMap<Integer, Text> repToRecordMap = new TreeMap<Integer, Text>(new RepComparator());
         File reducerfile = new File("reducer");
@@ -121,22 +122,17 @@ public class TopTen {
                 repToRecordMap.put(Integer.valueOf(profile_map.get("Reputation")), 
                         new Text(String.valueOf(profile_map.get("Id"))));
             }
-            output.close();
-	}
-        
-        // Write the final top ten items to the hbase
-        protected void cleanup(Context context) throws IOException, InterruptedException {
-            int counter = 1;
-            FileWriter output = new FileWriter(reducerfile, true);
+            
+            int counter = 0;
             for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
                 output.write(String.valueOf(entry.getKey()) + ", " + entry.getValue().toString() + "\r\n");
                 output.flush();
-                Put inHBase = new Put(Bytes.toBytes(entry.getKey()));
-                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
-                        Bytes.toBytes(Integer.valueOf(entry.getValue().toString())));
+                Put inHBase = new Put(entry.getValue().getBytes());
                 inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("id"), 
-                        Bytes.toBytes(Integer.valueOf(entry.getKey())));
-                output.write("Saved");
+                        entry.getValue().getBytes());
+                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
+                        new Text(String.valueOf(entry.getKey())).getBytes());
+                output.write("Saved\r\n");
                 output.flush();
                 context.write(NullWritable.get(), inHBase);
                 if (++counter > 10) {
@@ -144,7 +140,29 @@ public class TopTen {
                 }
             }
             output.close();
-        }
+	}
+        
+//        // Write the final top ten items to the hbase
+//        protected void cleanup(Context context) throws IOException, InterruptedException {
+//            int counter = 1;
+//            FileWriter output = new FileWriter(reducerfile, true);
+//            for (Map.Entry<Integer, Text> entry: repToRecordMap.entrySet()) {
+//                output.write(String.valueOf(entry.getKey()) + ", " + entry.getValue().toString() + "\r\n");
+//                output.flush();
+//                Put inHBase = new Put(Bytes.toBytes(entry.getKey()));
+//                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("rep"), 
+//                        Bytes.toBytes(Integer.valueOf(entry.getValue().toString())));
+//                inHBase.addColumn(Bytes.toBytes("info"), Bytes.toBytes("id"), 
+//                        Bytes.toBytes(Integer.valueOf(entry.getKey())));
+//                output.write("Saved\r\n");
+//                output.flush();
+//                context.write(NullWritable.get(), inHBase);
+//                if (++counter > 10) {
+//                    break;
+//                }
+//            }
+//            output.close();
+//        }
     }
     
     static class RepComparator implements Comparator {
@@ -162,23 +180,26 @@ public class TopTen {
 
     public static void main(String[] args) throws Exception {
 	// <FILL IN>
-        Configuration conf = new Configuration();
-//        System.out.println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        Configuration conf = new HBaseConfiguration();  // HBase version, not the normal configuration
+
+        conf.set(TableOutputFormat.OUTPUT_TABLE, "Topten");
         Job job = Job.getInstance(conf, "TopTen");
         job.setJarByClass(TopTen.class);
 
         job.setMapperClass(TopTenMapper.class);
-        job.setCombinerClass(TopTenReducer.class);
+//        job.setCombinerClass(TopTenReducer.class);
         job.setReducerClass(TopTenReducer.class);
         job.setMapOutputKeyClass(NullWritable.class);
         job.setMapOutputValueClass(Text.class);
-        job.setOutputKeyClass(NullWritable.class);
-//        job.setOutputValueClass(Text.class);
+//        job.setOutputKeyClass(NullWritable.class);
+//        job.setOutputValueClass(Put.class);
+        job.setInputFormatClass(TextInputFormat.class);
+        job.setOutputFormatClass(TableOutputFormat.class);
         job.setNumReduceTasks(1);
         
         FileInputFormat.addInputPath(job, new Path(args[0]));
         
-        TableMapReduceUtil.initTableReducerJob("topten", TopTenReducer.class, job);
+        TableMapReduceUtil.initTableReducerJob("Topten", TopTenReducer.class, job);
         
         System.exit(job.waitForCompletion(true) ? 0 : 1);
     }
