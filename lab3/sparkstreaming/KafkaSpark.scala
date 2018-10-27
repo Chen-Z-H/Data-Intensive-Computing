@@ -77,7 +77,7 @@ object KafkaSpark {
 //    }
 
 
-    val spec = StateSpec.function[String, Double, (Int, Double), (String, Double)](mappingFunc _)    // 什么是 partially applied function ？
+    val spec = StateSpec.function[String, Double, (Int, Double), (String, Double)](mappingFunc _)
     val stateDstream = pairs.mapWithState(spec)
     stateDstream.foreachRDD(rdd => rdd.foreach(pair => writer.println(s"MapWithState: key=${pair._1} value=${pair._2}")))
     writer.flush()
