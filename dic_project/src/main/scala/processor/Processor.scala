@@ -1,47 +1,33 @@
 package processor
 
-import java.io._
+import java.io.{ByteArrayInputStream, PrintStream}
+import java.net.Socket
 import java.util.Base64
 
 import bean.DataPackage
 import com.google.gson.Gson
-import org.apache.kafka.clients.consumer.ConsumerConfig
+import javafx.scene.image.Image
+import kafka.serializer.StringDecoder
 import org.apache.kafka.common.serialization.StringDeserializer
-import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
+import org.apache.spark.SparkConf
+import org.opencv.core.{Core, Size}
+
+//import org.apache.spark.streaming.kafka._
+import org.apache.spark.streaming.{Seconds, StateSpec, StreamingContext}
+import org.apache.spark.streaming._
+//import org.apache.spark.streaming.kafka.KafkaUtils
 import org.apache.spark.streaming.kafka010.KafkaUtils
 import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
-import org.opencv.core.{Core, Size}
-import java.net.Socket
+import org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe
 
-import scala.collection.mutable.ArrayBuffer
-//import org.apache.spark.streaming.kafka._
-import kafka.serializer.{DefaultDecoder, StringDecoder}
-import org.apache.spark.SparkConf
-import org.apache.spark.streaming._
-import javafx.scene.image.Image
-import javafx.concurrent._
-import javafx.stage.Window
 
-import scala.util.control.Breaks._
+object Processor {
 
-class ProcessorTask() extends Task[Image]{
-
-  var directory = ""
-  var videoPath = ""
-  val topic = "detection"
   final val PORT = 12345
-  final val IP_ADDRESS = "localhost"
+  final val IP_ADDRESS = "127.0.0.1"
 
-  def this(directory: String = "", videoPath: String = "") {
-    this()
-    this.directory = directory
-    this.videoPath = videoPath
-  }
+  def main(args: Array[String]): Unit = {
 
-  override def call(): Image = {
-    System.loadLibrary(Core.NATIVE_LIBRARY_NAME)
-
-    /*---------------------------------------------------------------------*/
     System.loadLibrary(Core.NATIVE_LIBRARY_NAME)
     val kafkaConf = Map[String, Object](
       "bootstrap.servers" -> "localhost:9092",
@@ -70,44 +56,39 @@ class ProcessorTask() extends Task[Image]{
       Subscribe[String, String](topics, kafkaConf))
 
 
-    val packages = messages.map(x => x.value()).foreachRDD(
+     messages.map(x => x.value()).foreachRDD(
       rdd => {
         //        println("received!")
         val detector = new VideoHumanDetection()
-        var socket = new Socket(IP_ADDRESS, PORT)
-        val out = new PrintStream(socket.getOutputStream)
-        try {
+        var socket: Socket = null
+          try {
           for (dp <- rdd.collect()) {
+            socket = new Socket(IP_ADDRESS, PORT)
+            val out = new PrintStream(socket.getOutputStream)
+
             val gson = new Gson()
             val frame: DataPackage = gson.fromJson(dp.toString, classOf[DataPackage])
             //              updateValue(new Image(new ByteArrayInputStream(frame.getFrameBytes)))
-            println(frame.getTime)
-//            val out = new DataOutputStream(socket.getOutputStream())
-//            Thread.sleep(100)
-            out.println(frame.getFrame)
+            println(frame.getFrame.length)
+            //            val out = new DataOutputStream(socket.getOutputStream())
+            val processed = detector.detectHuman(frame.decodeToMat(), frame.getTime.toString)
+            out.println(DataPackage.encodeToString(processed))
+            out.flush()
+            out.close()
+            socket.close()
           }
-//          out.close()
         } catch {
           case e: Exception => println("Exception at ProcessorTask: " + e.getMessage)
         } finally {
-          if (socket != null) {
-            try {
-              socket = null
-            } catch {
-              case e: Exception => {
-                socket = null
-                println("Exception at ProcessorTask: " + e.getMessage)
-              }
+            if (socket != null) {
+              socket.close()
             }
-          }
         }
       }
     )
 
-
     ssc.start()
     ssc.awaitTermination()
-
-    null
+    /*---------------------------------------------*/
   }
 }
